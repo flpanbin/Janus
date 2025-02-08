@@ -1,5 +1,6 @@
 import gradio as gr
 import torch
+import random
 from transformers import AutoConfig, AutoModelForCausalLM
 from janus.models import MultiModalityCausalLM, VLChatProcessor
 from janus.utils.io import load_pil_images
@@ -29,17 +30,17 @@ tokenizer = vl_chat_processor.tokenizer
 cuda_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 @torch.inference_mode()
-# @spaces.GPU(duration=120) 
+# @spaces.GPU(duration=120)
 # Multimodal Understanding function
 def multimodal_understanding(image, question, seed, top_p, temperature):
     # Clear CUDA cache before generating
     torch.cuda.empty_cache()
-    
+
     # set seed
     torch.manual_seed(seed)
     np.random.seed(seed)
     torch.cuda.manual_seed(seed)
-    
+
     conversation = [
         {
             "role": "<|User|>",
@@ -48,15 +49,15 @@ def multimodal_understanding(image, question, seed, top_p, temperature):
         },
         {"role": "<|Assistant|>", "content": ""},
     ]
-    
+
     pil_images = [Image.fromarray(image)]
     prepare_inputs = vl_chat_processor(
         conversations=conversation, images=pil_images, force_batchify=True
     ).to(cuda_device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16)
-    
-    
+
+
     inputs_embeds = vl_gpt.prepare_inputs_embeds(**prepare_inputs)
-    
+
     outputs = vl_gpt.language_model.generate(
         inputs_embeds=inputs_embeds,
         attention_mask=prepare_inputs.attention_mask,
@@ -69,7 +70,7 @@ def multimodal_understanding(image, question, seed, top_p, temperature):
         temperature=temperature,
         top_p=top_p,
     )
-    
+
     answer = tokenizer.decode(outputs[0].cpu().tolist(), skip_special_tokens=True)
     return answer
 
@@ -84,7 +85,7 @@ def generate(input_ids,
              patch_size: int = 16):
     # Clear CUDA cache before generating
     torch.cuda.empty_cache()
-    
+
     tokens = torch.zeros((parallel_size * 2, len(input_ids)), dtype=torch.int).to(cuda_device)
     for i in range(parallel_size * 2):
         tokens[i, :] = input_ids
@@ -113,7 +114,7 @@ def generate(input_ids,
             img_embeds = vl_gpt.prepare_gen_img_embeds(next_token)
             inputs_embeds = img_embeds.unsqueeze(dim=1)
 
-    
+
 
     patches = vl_gpt.gen_vision_model.decode_code(generated_tokens.to(dtype=torch.int),
                                                  shape=[parallel_size, 8, width // patch_size, height // patch_size])
@@ -146,8 +147,8 @@ def generate_image(prompt,
         np.random.seed(seed)
     width = 384
     height = 384
-    parallel_size = 5
-    
+    parallel_size = 4
+
     with torch.no_grad():
         messages = [{'role': '<|User|>', 'content': prompt},
                     {'role': '<|Assistant|>', 'content': ''}]
@@ -155,7 +156,7 @@ def generate_image(prompt,
                                                                    sft_format=vl_chat_processor.sft_format,
                                                                    system_prompt='')
         text = text + vl_chat_processor.image_start_tag
-        
+
         input_ids = torch.LongTensor(tokenizer.encode(text))
         output, patches = generate(input_ids,
                                    width // 16 * 16,
@@ -169,55 +170,57 @@ def generate_image(prompt,
                         parallel_size=parallel_size)
 
         return [Image.fromarray(images[i]).resize((768, 768), Image.LANCZOS) for i in range(parallel_size)]
-        
+
 
 # Gradio interface
 with gr.Blocks() as demo:
-    gr.Markdown(value="# Multimodal Understanding")
+    gr.Markdown(value="# 一) 多模态理解")
     with gr.Row():
-        image_input = gr.Image()
         with gr.Column():
-            question_input = gr.Textbox(label="Question")
+            image_input = gr.Image()
+            question_input = gr.Textbox(label="输入提示词/问题",value="请输入您的问题或提示词")
+        with gr.Column():
             und_seed_input = gr.Number(label="Seed", precision=0, value=42)
             top_p = gr.Slider(minimum=0, maximum=1, value=0.95, step=0.05, label="top_p")
             temperature = gr.Slider(minimum=0, maximum=1, value=0.1, step=0.05, label="temperature")
-        
-    understanding_button = gr.Button("Chat")
-    understanding_output = gr.Textbox(label="Response")
+            understanding_button = gr.Button("点击开始理解", variant="primary")
 
-    examples_inpainting = gr.Examples(
-        label="Multimodal Understanding examples",
-        examples=[
-            [
-                "explain this meme",
-                "images/doge.png",
+        examples_inpainting = gr.Examples(
+            label="多模态理解的例子(点击可自动填充输入框)",
+            examples=[
+                [
+                    "解释这个meme",
+                    "images/doge.png",
+                ],
+                [
+                    "将公式转为 latex code.",
+                    "images/equation.png",
+                ],
             ],
-            [
-                "Convert the formula into latex code.",
-                "images/equation.png",
-            ],
-        ],
-        inputs=[question_input, image_input],
-    )
-    
-        
-    gr.Markdown(value="# Text-to-Image Generation")
+            inputs=[question_input, image_input],
+        )
 
-    
-    
+    understanding_output = gr.Textbox(label="回复")
+
+
+    gr.Markdown(value="# 二) 文生图 ")
+
+
+
     with gr.Row():
-        cfg_weight_input = gr.Slider(minimum=1, maximum=10, value=5, step=0.5, label="CFG Weight")
-        t2i_temperature = gr.Slider(minimum=0, maximum=1, value=1.0, step=0.05, label="temperature")
+        with gr.Column(scale=2):
+            prompt_input = gr.Textbox(label="输入提示词. (Prompt in more detail can help produce better images!)",value="pretty chinese girl in a jungle, cold color palette, muted colors, detailed, 8k")
+            generation_button = gr.Button("点击生成图片", variant="primary")
+        with gr.Column(scale=1):
+            cfg_weight_input = gr.Slider(minimum=1, maximum=10, value=5, step=0.5, label="CFG Weight")
+            t2i_temperature = gr.Slider(minimum=0, maximum=1, value=1.0, step=0.05, label="temperature")
+            seed_input = gr.Number(label="Seed (Optional)", precision=0, value=random.randint(1, 100000))
 
-    prompt_input = gr.Textbox(label="Prompt. (Prompt in more detail can help produce better images!)")
-    seed_input = gr.Number(label="Seed (Optional)", precision=0, value=12345)
 
-    generation_button = gr.Button("Generate Images")
-
-    image_output = gr.Gallery(label="Generated Images", columns=2, rows=2, height=300)
+    image_output = gr.Gallery(label="输出图片 Generated Images", columns=2, rows=2, height=700)
 
     examples_t2i = gr.Examples(
-        label="Text to image generation examples.",
+        label="文生图的例子（点击自动填充） examples.",
         examples=[
             "Master shifu racoon wearing drip attire as a street gangster.",
             "The face of a beautiful girl",
@@ -228,18 +231,19 @@ with gr.Blocks() as demo:
         ],
         inputs=prompt_input,
     )
-    
+
     understanding_button.click(
         multimodal_understanding,
         inputs=[image_input, question_input, und_seed_input, top_p, temperature],
         outputs=understanding_output
     )
-    
+
     generation_button.click(
         fn=generate_image,
         inputs=[prompt_input, seed_input, cfg_weight_input, t2i_temperature],
         outputs=image_output
     )
 
-demo.launch(share=True)
+#demo.launch(share=True)
+demo.launch(server_name="0.0.0.0", server_port=10002, share=True)
 # demo.queue(concurrency_count=1, max_size=10).launch(server_name="0.0.0.0", server_port=37906, root_path="/path")
