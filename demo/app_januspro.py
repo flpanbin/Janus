@@ -13,7 +13,7 @@ import time
 
 
 # Load model and processor
-model_path = "deepseek-ai/Janus-Pro-7B"
+model_path = "/JANUS/deepseek-ai/Janus-Pro-7B"
 config = AutoConfig.from_pretrained(model_path)
 language_config = config.language_config
 language_config._attn_implementation = 'eager'
@@ -190,11 +190,11 @@ with gr.Blocks() as demo:
             examples=[
                 [
                     "解释这个meme",
-                    "images/doge.png",
+                    "/JANUS/images/doge.png",
                 ],
                 [
                     "将公式转为 latex code.",
-                    "images/equation.png",
+                    "/JANUS/images/equation.png",
                 ],
             ],
             inputs=[question_input, image_input],
